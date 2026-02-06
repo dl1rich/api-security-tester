@@ -236,13 +236,13 @@ class PentesterGuidance:
                     'Database fingerprinting information'
                 ],
                 'exploitation_steps': [
-                    '1. Identify injection points in parameters',
-                    '2. Test with single quote (\\') to trigger errors',
-                    '3. Try Boolean-based payloads (AND 1=1, AND 1=2)',
-                    '4. Attempt time-based delays (SLEEP, WAITFOR)',
-                    '5. Extract database version and structure',
-                    '6. Enumerate tables and columns',
-                    '7. Extract sensitive data'
+                    "1. Identify injection points in parameters",
+                    "2. Test with single quote (') to trigger errors",
+                    "3. Try Boolean-based payloads (AND 1=1, AND 1=2)",
+                    "4. Attempt time-based delays (SLEEP, WAITFOR)",
+                    "5. Extract database version and structure",
+                    "6. Enumerate tables and columns",
+                    "7. Extract sensitive data"
                 ],
                 'tools_recommended': [
                     'sqlmap - Automated SQL injection tool',

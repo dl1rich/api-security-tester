@@ -111,10 +111,40 @@ api-security-tester/
 ### Additional Security Tests
 - SQL/NoSQL Injection
 - Cross-Site Scripting (XSS)
-- Command Injection
-- Path Traversal
+- Command Injection (OS Command Execution)
+- Path Traversal / Local File Inclusion
+- LDAP Injection
+- XML External Entity (XXE)
+- Remote Code Execution (RCE)
+- Insecure Deserialization
+- CORS Misconfiguration
+- Open Redirect
 - Business Logic Flaws
 - Rate Limiting Bypass
+
+## 🆕 Enhanced Features
+
+### Comprehensive Vulnerability Detection
+This tool now includes **25+ vulnerability detectors** covering:
+- All OWASP API Top 10 (2023) categories
+- Common injection vulnerabilities (SQL, NoSQL, Command, LDAP, XXE)
+- Advanced attack vectors (RCE, Deserialization, CORS)
+- File system vulnerabilities (Path Traversal, LFI)
+
+### Detailed Statistics for Pentesters
+- ⏱️ **Timing Metrics**: Average time per endpoint and test type
+- 📊 **Vulnerability Density**: Vulnerabilities per endpoint ratio
+- 🎯 **Risk Scoring**: Risk scores for each endpoint
+- 📈 **Testing Efficiency**: Endpoints/minute, tests/second
+
+### Pentester Guidance
+For each vulnerability type, get:
+- **What to look for**: Specific indicators and patterns
+- **Exploitation steps**: Step-by-step manual testing guide
+- **Tool recommendations**: Best tools for each vulnerability
+- **Severity assessment**: How to determine impact level
+
+See [ENHANCEMENTS.md](ENHANCEMENTS.md) for complete documentation.
 
 ## Usage
 
