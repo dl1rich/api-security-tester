@@ -190,6 +190,30 @@ class CommandInjectionDetector(BaseDetector):
                 return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Query parameter tests
+        for param in self.get_query_parameters(endpoint):
+            test_cases.append({
+                'name': f"command_injection_query_{param.get('name')}",
+                'parameter_type': 'query',
+                'parameter_name': param.get('name'),
+                'payload_count': len(self.payloads)
+            })
+        
+        # Body parameter tests
+        if endpoint.method.upper() in ['POST', 'PUT', 'PATCH'] and endpoint.request_body:
+            test_cases.append({
+                'name': "command_injection_body",
+                'parameter_type': 'body',
+                'parameter_name': 'request_body',
+                'payload_count': len(self.payloads)
+            })
+        
+        return test_cases
 
 
 class NoSQLInjectionDetector(BaseDetector):
@@ -360,6 +384,30 @@ class NoSQLInjectionDetector(BaseDetector):
             return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Query parameter tests
+        for param in self.get_query_parameters(endpoint):
+            test_cases.append({
+                'name': f"nosql_injection_query_{param.get('name')}",
+                'parameter_type': 'query',
+                'parameter_name': param.get('name'),
+                'payload_count': len(self.payloads)
+            })
+        
+        # Body parameter tests
+        if endpoint.method.upper() in ['POST', 'PUT', 'PATCH'] and endpoint.request_body:
+            test_cases.append({
+                'name': "nosql_injection_body",
+                'parameter_type': 'body',
+                'parameter_name': 'request_body',
+                'payload_count': len(self.json_payloads)
+            })
+        
+        return test_cases
 
 
 class PathTraversalDetector(BaseDetector):
@@ -520,6 +568,32 @@ class PathTraversalDetector(BaseDetector):
                 return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Query parameter tests - focus on file-related parameters
+        for param in self.get_query_parameters(endpoint):
+            param_name = param.get('name', '').lower()
+            if any(keyword in param_name for keyword in ['file', 'path', 'dir', 'folder', 'document', 'page', 'include']):
+                test_cases.append({
+                    'name': f"path_traversal_query_{param.get('name')}",
+                    'parameter_type': 'query',
+                    'parameter_name': param.get('name'),
+                    'payload_count': len(self.payloads)
+                })
+        
+        # Body parameter tests
+        if endpoint.method.upper() in ['POST', 'PUT', 'PATCH'] and endpoint.request_body:
+            test_cases.append({
+                'name': "path_traversal_body",
+                'parameter_type': 'body',
+                'parameter_name': 'request_body',
+                'payload_count': len(self.payloads)
+            })
+        
+        return test_cases
 
 
 class LDAPInjectionDetector(BaseDetector):
@@ -631,3 +705,20 @@ class LDAPInjectionDetector(BaseDetector):
             return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Query parameter tests - focus on auth-related parameters
+        for param in self.get_query_parameters(endpoint):
+            param_name = param.get('name', '').lower()
+            if any(keyword in param_name for keyword in ['user', 'username', 'login', 'email', 'search', 'query']):
+                test_cases.append({
+                    'name': f"ldap_injection_query_{param.get('name')}",
+                    'parameter_type': 'query',
+                    'parameter_name': param.get('name'),
+                    'payload_count': len(self.payloads)
+                })
+        
+        return test_cases

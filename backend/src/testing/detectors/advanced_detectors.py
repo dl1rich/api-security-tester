@@ -107,6 +107,21 @@ class XXEDetector(BaseDetector):
                 return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Only test endpoints that accept XML (POST/PUT/PATCH)
+        if endpoint.method.upper() in ['POST', 'PUT', 'PATCH']:
+            test_cases.append({
+                'name': "xxe_injection_xml",
+                'parameter_type': 'body',
+                'parameter_name': 'xml_content',
+                'payload_count': len(self.payloads)
+            })
+        
+        return test_cases
 
 
 class CORSMisconfigurationDetector(BaseDetector):
@@ -194,6 +209,21 @@ class CORSMisconfigurationDetector(BaseDetector):
             return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Test with different origins
+        for origin in self.test_origins:
+            test_cases.append({
+                'name': f"cors_misconfiguration_{origin.replace('://', '_').replace('/', '_')}",
+                'parameter_type': 'header',
+                'parameter_name': 'Origin',
+                'payload_count': 1
+            })
+        
+        return test_cases
 
 
 class OpenRedirectDetector(BaseDetector):
@@ -291,6 +321,23 @@ class OpenRedirectDetector(BaseDetector):
             return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Test redirect-related query parameters
+        for param in self.get_query_parameters(endpoint):
+            param_name = param.get('name', '').lower()
+            if any(keyword in param_name for keyword in ['redirect', 'url', 'return', 'next', 'target', 'dest', 'destination']):
+                test_cases.append({
+                    'name': f"open_redirect_query_{param.get('name')}",
+                    'parameter_type': 'query',
+                    'parameter_name': param.get('name'),
+                    'payload_count': len(self.payloads)
+                })
+        
+        return test_cases
 
 
 class InsecureDeserializationDetector(BaseDetector):
@@ -370,6 +417,21 @@ class InsecureDeserializationDetector(BaseDetector):
             return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Only test endpoints that accept serialized data (POST/PUT/PATCH)
+        if endpoint.method.upper() in ['POST', 'PUT', 'PATCH']:
+            test_cases.append({
+                'name': "insecure_deserialization_java",
+                'parameter_type': 'body',
+                'parameter_name': 'serialized_object',
+                'payload_count': 1
+            })
+        
+        return test_cases
 
 
 class RemoteCodeExecutionDetector(BaseDetector):
@@ -522,3 +584,27 @@ class RemoteCodeExecutionDetector(BaseDetector):
                 return True
         
         return False
+    
+    def get_test_cases(self, endpoint: APIEndpoint, spec: APISpecification) -> List[Dict[str, Any]]:
+        """Get test cases for this detector."""
+        test_cases = []
+        
+        # Query parameter tests
+        for param in self.get_query_parameters(endpoint):
+            test_cases.append({
+                'name': f"rce_query_{param.get('name')}",
+                'parameter_type': 'query',
+                'parameter_name': param.get('name'),
+                'payload_count': len(self.payloads)
+            })
+        
+        # Body parameter tests
+        if endpoint.method.upper() in ['POST', 'PUT', 'PATCH'] and endpoint.request_body:
+            test_cases.append({
+                'name': "rce_body",
+                'parameter_type': 'body',
+                'parameter_name': 'request_body',
+                'payload_count': len(self.payloads)
+            })
+        
+        return test_cases
