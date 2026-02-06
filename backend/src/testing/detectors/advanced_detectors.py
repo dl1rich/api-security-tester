@@ -216,8 +216,10 @@ class CORSMisconfigurationDetector(BaseDetector):
         
         # Test with different origins
         for origin in self.test_origins:
+            # Sanitize origin for test name by replacing non-alphanumeric characters
+            sanitized_origin = re.sub(r'[^a-zA-Z0-9_]', '_', origin)
             test_cases.append({
-                'name': f"cors_misconfiguration_{origin.replace('://', '_').replace('/', '_')}",
+                'name': f"cors_misconfiguration_{sanitized_origin}",
                 'parameter_type': 'header',
                 'parameter_name': 'Origin',
                 'payload_count': 1
