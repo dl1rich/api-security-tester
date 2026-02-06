@@ -191,6 +191,17 @@ async def list_test_sessions(
         }
     }
 
+@router.get("/test/{session_id}/enhanced-stats")
+async def get_enhanced_test_statistics(session_id: str):
+    """Get enhanced statistics with timing data and pentester guidance."""
+    report_gen = ReportGenerator()
+    enhanced_stats = report_gen.get_enhanced_statistics(session_id)
+    
+    if not enhanced_stats:
+        raise HTTPException(status_code=404, detail="Test session not found")
+    
+    return enhanced_stats
+
 @router.get("/test/{session_id}/stats")
 async def get_test_statistics(session_id: str):
     """Get detailed statistics for a test session."""

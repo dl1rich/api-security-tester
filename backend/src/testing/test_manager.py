@@ -14,6 +14,13 @@ from testing.detectors.owasp_top10 import BOLADetector, BrokenFunctionAuthDetect
 from testing.detectors.owasp_additional import ExcessiveDataExposureDetector, ResourceConsumptionDetector, SecurityMisconfigDetector
 from testing.detectors.owasp_final import ImproperInventoryDetector, UnsafeConsumptionDetector, MassAssignmentDetector
 from testing.detectors.role_based_auth import RoleBasedAuthorizationDetector
+from testing.detectors.injection_detectors import (
+    CommandInjectionDetector, NoSQLInjectionDetector, PathTraversalDetector, LDAPInjectionDetector
+)
+from testing.detectors.advanced_detectors import (
+    XXEDetector, CORSMisconfigurationDetector, OpenRedirectDetector, 
+    InsecureDeserializationDetector, RemoteCodeExecutionDetector
+)
 from testing.data_manager import TestDataManager, FuzzingDetector
 from testing.models import TestSession, Vulnerability, TestResult
 from websocket import test_notifier
@@ -48,6 +55,19 @@ class TestManager:
         self._detection_engine.register_detector(SecurityMisconfigDetector())  # API8
         self._detection_engine.register_detector(ImproperInventoryDetector())  # API9
         self._detection_engine.register_detector(UnsafeConsumptionDetector())  # API10
+        
+        # Register injection detectors
+        self._detection_engine.register_detector(CommandInjectionDetector())
+        self._detection_engine.register_detector(NoSQLInjectionDetector())
+        self._detection_engine.register_detector(PathTraversalDetector())
+        self._detection_engine.register_detector(LDAPInjectionDetector())
+        
+        # Register advanced detectors
+        self._detection_engine.register_detector(XXEDetector())
+        self._detection_engine.register_detector(CORSMisconfigurationDetector())
+        self._detection_engine.register_detector(OpenRedirectDetector())
+        self._detection_engine.register_detector(InsecureDeserializationDetector())
+        self._detection_engine.register_detector(RemoteCodeExecutionDetector())
         
         # Register specialized detectors
         self._detection_engine.register_detector(RoleBasedAuthorizationDetector())
