@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from typing import Dict, List, Set, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import WebSocket, WebSocketDisconnect
 from enum import Enum
 
@@ -49,11 +49,20 @@ class WebSocketMessage:
     
     def to_json(self) -> str:
         """Convert message to JSON string."""
-        return json.dumps(self.to_dict(), default=str)
+        try:
+            return json.dumps(self.to_dict(), default=str)
+        except Exception as e:
+            logger.error(f"Error serializing message to JSON: {e}")
+            # Fallback to basic message
+            return json.dumps({
+                'type': self.type.value,
+                'error': 'Serialization failed',
+                'timestamp': self.timestamp.isoformat()
+            })
 
 
 class WebSocketConnection:
-    """Represents a WebSocket connection."""
+    """Represents a WebSocket connection with improved error handling."""
     
     def __init__(self, websocket: WebSocket, connection_id: str, 
                  subscriptions: Set[str] = None):
@@ -63,15 +72,39 @@ class WebSocketConnection:
         self.connected_at = datetime.utcnow()
         self.last_heartbeat = datetime.utcnow()
         self.is_active = True
+        self.send_failures = 0
+        self.max_failures = 3  # Max consecutive failures before marking inactive
+        self.message_queue = asyncio.Queue(maxsize=100)  # Buffer for messages
     
-    async def send_message(self, message: WebSocketMessage):
-        """Send a message to this connection."""
+    async def send_message(self, message: WebSocketMessage, retry: bool = True):
+        """Send a message to this connection with retry logic."""
+        if not self.is_active:
+            return False
+        
         try:
             await self.websocket.send_text(message.to_json())
+            self.send_failures = 0  # Reset failure count on success
             logger.debug(f"Sent message {message.type.value} to connection {self.connection_id}")
-        except Exception as e:
-            logger.error(f"Failed to send message to {self.connection_id}: {e}")
+            return True
+        except WebSocketDisconnect:
+            logger.info(f"Connection {self.connection_id} disconnected during send")
             self.is_active = False
+            return False
+        except Exception as e:
+            self.send_failures += 1
+            logger.error(f"Failed to send message to {self.connection_id} (attempt {self.send_failures}): {e}")
+            
+            if self.send_failures >= self.max_failures:
+                logger.warning(f"Connection {self.connection_id} marked inactive after {self.send_failures} failures")
+                self.is_active = False
+                return False
+            
+            # Retry once if enabled
+            if retry and self.send_failures < 2:
+                await asyncio.sleep(0.1)
+                return await self.send_message(message, retry=False)
+            
+            return False
     
     async def send_heartbeat(self):
         """Send heartbeat to connection."""
@@ -79,8 +112,14 @@ class WebSocketConnection:
             NotificationType.HEARTBEAT,
             {'timestamp': datetime.utcnow().isoformat()}
         )
-        await self.send_message(heartbeat)
-        self.last_heartbeat = datetime.utcnow()
+        success = await self.send_message(heartbeat, retry=False)
+        if success:
+            self.last_heartbeat = datetime.utcnow()
+        return success
+    
+    def is_stale(self, timeout_seconds: int = 120) -> bool:
+        """Check if connection hasn't received heartbeat response in timeout period."""
+        return (datetime.utcnow() - self.last_heartbeat).total_seconds() > timeout_seconds
     
     def is_subscribed_to(self, channel: str) -> bool:
         """Check if connection is subscribed to a channel."""
@@ -96,7 +135,7 @@ class WebSocketConnection:
 
 
 class WebSocketManager:
-    """Manages WebSocket connections and broadcasting."""
+    """Manages WebSocket connections and broadcasting with improved reliability."""
     
     def __init__(self):
         self.connections: Dict[str, WebSocketConnection] = {}
@@ -106,6 +145,7 @@ class WebSocketManager:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._cleanup_task: Optional[asyncio.Task] = None
         self._running = False
+        self._lock = asyncio.Lock()  # For thread-safe operations
     
     async def start(self):
         """Start background tasks."""
@@ -121,30 +161,36 @@ class WebSocketManager:
         """Stop background tasks."""
         self._running = False
         
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
-            try:
-                await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
+        # Cancel background tasks
+        tasks_to_cancel = []
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            tasks_to_cancel.append(self._heartbeat_task)
+        if self._cleanup_task and not self._cleanup_task.done():
+            tasks_to_cancel.append(self._cleanup_task)
         
-        if self._cleanup_task:
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
+        for task in tasks_to_cancel:
+            task.cancel()
+        
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         
         # Close all connections
-        for connection in list(self.connections.values()):
-            await self.disconnect(connection.connection_id)
+        async with self._lock:
+            connection_ids = list(self.connections.keys())
+        
+        for conn_id in connection_ids:
+            await self.disconnect(conn_id)
         
         logger.info("WebSocket manager stopped")
     
     async def connect(self, websocket: WebSocket, connection_id: str,
                      subscriptions: List[str] = None) -> WebSocketConnection:
         """Add a new WebSocket connection."""
-        await websocket.accept()
+        try:
+            await websocket.accept()
+        except Exception as e:
+            logger.error(f"Failed to accept WebSocket connection {connection_id}: {e}")
+            raise
         
         connection = WebSocketConnection(
             websocket, 
@@ -152,7 +198,8 @@ class WebSocketManager:
             set(subscriptions or ['all'])
         )
         
-        self.connections[connection_id] = connection
+        async with self._lock:
+            self.connections[connection_id] = connection
         
         # Send connection confirmation
         welcome_message = WebSocketMessage(
@@ -166,26 +213,33 @@ class WebSocketManager:
         )
         await connection.send_message(welcome_message)
         
-        logger.info(f"WebSocket connection {connection_id} established")
+        logger.info(f"WebSocket connection {connection_id} established with subscriptions: {connection.subscriptions}")
         return connection
     
     async def disconnect(self, connection_id: str):
         """Remove a WebSocket connection."""
-        if connection_id in self.connections:
+        async with self._lock:
+            if connection_id not in self.connections:
+                return
+            
             connection = self.connections[connection_id]
             
             try:
-                await connection.websocket.close()
+                if connection.is_active:
+                    await connection.websocket.close()
             except Exception as e:
                 logger.debug(f"Error closing WebSocket {connection_id}: {e}")
             
             del self.connections[connection_id]
             
             # Remove from session mappings
-            for session_id, conn_ids in self.session_connections.items():
+            for session_id, conn_ids in list(self.session_connections.items()):
                 conn_ids.discard(connection_id)
-            
-            logger.info(f"WebSocket connection {connection_id} disconnected")
+                # Clean up empty session mappings
+                if not conn_ids:
+                    del self.session_connections[session_id]
+        
+        logger.info(f"WebSocket connection {connection_id} disconnected")
     
     def subscribe_to_session(self, connection_id: str, session_id: str):
         """Subscribe a connection to session updates."""
@@ -204,6 +258,10 @@ class WebSocketManager:
         if session_id in self.session_connections:
             self.session_connections[session_id].discard(connection_id)
             
+            # Clean up empty session mappings
+            if not self.session_connections[session_id]:
+                del self.session_connections[session_id]
+            
             if connection_id in self.connections:
                 self.connections[connection_id].remove_subscription(f"session:{session_id}")
             
@@ -211,33 +269,54 @@ class WebSocketManager:
     
     async def broadcast_to_all(self, message: WebSocketMessage):
         """Broadcast message to all connections."""
-        if not self.connections:
+        async with self._lock:
+            connections = list(self.connections.values())
+        
+        if not connections:
             return
         
         tasks = []
-        for connection in self.connections.values():
+        for connection in connections:
             if connection.is_active:
-                tasks.append(connection.send_message(message))
+                tasks.append(self._safe_send(connection, message))
         
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Log any exceptions
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error broadcasting to connection: {result}")
     
     async def broadcast_to_session(self, session_id: str, message: WebSocketMessage):
         """Broadcast message to connections subscribed to a session."""
         if session_id not in self.session_connections:
+            logger.debug(f"No connections subscribed to session {session_id}")
             return
         
-        connection_ids = self.session_connections[session_id].copy()
-        tasks = []
+        async with self._lock:
+            connection_ids = self.session_connections[session_id].copy()
         
+        tasks = []
         for conn_id in connection_ids:
             if conn_id in self.connections:
                 connection = self.connections[conn_id]
                 if connection.is_active and connection.is_subscribed_to(f"session:{session_id}"):
-                    tasks.append(connection.send_message(message))
+                    tasks.append(self._safe_send(connection, message))
         
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Log failures
+            failures = sum(1 for r in results if isinstance(r, Exception) or r is False)
+            if failures > 0:
+                logger.warning(f"Failed to send to {failures}/{len(tasks)} connections for session {session_id}")
+    
+    async def _safe_send(self, connection: WebSocketConnection, message: WebSocketMessage):
+        """Safely send a message with error handling."""
+        try:
+            return await connection.send_message(message)
+        except Exception as e:
+            logger.error(f"Error sending to connection {connection.connection_id}: {e}")
+            return False
     
     async def send_to_connection(self, connection_id: str, message: WebSocketMessage):
         """Send message to a specific connection."""
@@ -245,6 +324,72 @@ class WebSocketManager:
             connection = self.connections[connection_id]
             if connection.is_active:
                 await connection.send_message(message)
+    
+    async def _heartbeat_loop(self):
+        """Background task to send periodic heartbeats."""
+        logger.info("Heartbeat loop started")
+        
+        while self._running:
+            try:
+                await asyncio.sleep(self.heartbeat_interval)
+                
+                async with self._lock:
+                    connections = list(self.connections.values())
+                
+                tasks = []
+                for connection in connections:
+                    if connection.is_active:
+                        tasks.append(connection.send_heartbeat())
+                
+                if tasks:
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    failures = sum(1 for r in results if not r or isinstance(r, Exception))
+                    if failures > 0:
+                        logger.debug(f"Heartbeat failed for {failures}/{len(tasks)} connections")
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in heartbeat loop: {e}")
+        
+        logger.info("Heartbeat loop stopped")
+    
+    async def _cleanup_loop(self):
+        """Background task to clean up stale connections."""
+        logger.info("Cleanup loop started")
+        
+        while self._running:
+            try:
+                await asyncio.sleep(self.cleanup_interval)
+                
+                async with self._lock:
+                    stale_connections = [
+                        conn_id for conn_id, conn in self.connections.items()
+                        if not conn.is_active or conn.is_stale()
+                    ]
+                
+                for conn_id in stale_connections:
+                    logger.info(f"Cleaning up stale connection: {conn_id}")
+                    await self.disconnect(conn_id)
+                
+                if stale_connections:
+                    logger.info(f"Cleaned up {len(stale_connections)} stale connections")
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in cleanup loop: {e}")
+        
+        logger.info("Cleanup loop stopped")
+    
+    def get_connection_stats(self) -> Dict[str, Any]:
+        """Get statistics about active connections."""
+        return {
+            'total_connections': len(self.connections),
+            'active_connections': sum(1 for c in self.connections.values() if c.is_active),
+            'sessions_with_connections': len(self.session_connections),
+            'total_session_subscriptions': sum(len(conns) for conns in self.session_connections.values())
+        }
     
     async def notify_test_started(self, session_id: str, test_config: Dict[str, Any]):
         """Notify that a test session has started."""
