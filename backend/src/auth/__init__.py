@@ -1,0 +1,1 @@
+"""Authentication handling and role management."""
